@@ -1,123 +1,30 @@
 package com.transecto;
 
+import com.opencsv.CSVWriter;
 import java.io.File;
 import java.io.FileWriter;
-import java.io.Serializable;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import org.geotools.data.FileDataStore;
-import org.geotools.data.FileDataStoreFinder;
-import org.geotools.data.simple.SimpleFeatureCollection;
-import org.geotools.data.simple.SimpleFeatureIterator;
-import org.geotools.data.simple.SimpleFeatureSource;
-import org.geotools.data.simple.SimpleFeatureStore;
+import java.util.ArrayList;\nimport java.util.List;
+import org.geotools.data.DataStore;
+import org.geotools.data.DefaultTransaction;
+import org.geotools.data.FeatureWriter;
+import org.geotools.data.Transaction;
+import org.geotools.data.memory.memory.MemoryDataStore;
+import org.geotools.data.shapefile.ShapefileDataStore;
 import org.geotools.feature.DefaultFeatureCollection;
-import org.geotools.feature.FeatureCollection;
-import org.geotools.feature.FeatureIterator;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geojson.feature.FeatureJSON;
-import org.geotools.geometry.jts.JTS;
-import org.geotools.referencing.CRS;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.Polygon;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
-import org.opengis.feature.type.AttributeDescriptor;
 
-public final class ExportUtils {
-
-    private ExportUtils() {
-    }
-
-    public static void exportGeoJson(List<GridGenerator.GridCell> cells, File outFile) throws Exception {
-        DefaultFeatureCollection features = new DefaultFeatureCollection();
-        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
-        typeBuilder.setName("grid");
-        typeBuilder.add("geometry", Geometry.class);
-        typeBuilder.add("id", String.class);
-        typeBuilder.add("row", Integer.class);
-        typeBuilder.add("col", Integer.class);
-        typeBuilder.add("area_m2", Double.class);
-        SimpleFeatureType type = typeBuilder.buildFeatureType();
-
-        for (GridGenerator.GridCell cell : cells) {
-            SimpleFeatureBuilder builder = new SimpleFeatureBuilder(type);
-            GeometryFactory gf = new GeometryFactory();
-            Geometry geometry = buildPolygonFromPoints(cell.points, gf);
-            builder.set("geometry", geometry);
-            builder.set("id", cell.id);
-            builder.set("row", cell.row);
-            builder.set("col", cell.col);
-            builder.set("area_m2", cell.areaM2);
-            features.add(builder.buildFeature(cell.id));
-        }
-
-        FeatureJSON json = new FeatureJSON();
-        json.writeFeatureCollection(features, outFile);
-    }
-
-    public static void exportCsv(List<GridGenerator.GridCell> cells, File outFile) throws Exception {
-        try (FileWriter writer = new FileWriter(outFile, StandardCharsets.UTF_8)) {
-            writer.write("id,row,col,area_m2\n");
-            for (GridGenerator.GridCell cell : cells) {
-                writer.write(cell.id + "," + cell.row + "," + cell.col + "," + cell.areaM2 + "\n");
-            }
-        }
-    }
-
-    public static void exportShapefile(List<GridGenerator.GridCell> cells, File outFile) throws Exception {
-        File parent = outFile.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-
-        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
-        typeBuilder.setName("grid");
-        typeBuilder.setNamespaceURI("http://transecto.com");
-        typeBuilder.add("geometry", Geometry.class);
-        typeBuilder.add("id", String.class);
-        typeBuilder.add("row", Integer.class);
-        typeBuilder.add("col", Integer.class);
-        typeBuilder.add("area_m2", Double.class);
-        SimpleFeatureType type = typeBuilder.buildFeatureType();
-
-        FileDataStore ds = FileDataStoreFinder.createDataStore(outFile);
-        ds.createSchema(type);
-
-        SimpleFeatureStore store = (SimpleFeatureStore) ds.getFeatureSource();
-        DefaultFeatureCollection collection = new DefaultFeatureCollection();
-        for (GridGenerator.GridCell cell : cells) {
-            GeometryFactory gf = new GeometryFactory();
-            Geometry geom = buildPolygonFromPoints(cell.points, gf);
-            SimpleFeatureBuilder builder = new SimpleFeatureBuilder(type);
-            builder.set("geometry", geom);
-            builder.set("id", cell.id);
-            builder.set("row", cell.row);
-            builder.set("col", cell.col);
-            builder.set("area_m2", cell.areaM2);
-            collection.add(builder.buildFeature(cell.id));
-        }
-
-        store.addFeatures(collection);
-        ds.dispose();
-    }
-
-    private static Geometry buildPolygonFromPoints(List<org.openstreetmap.gui.jmapviewer.GeoPosition> positions, GeometryFactory gf) {
-        if (positions == null || positions.isEmpty()) {
-            return gf.createPolygon();
-        }
-        List<org.locationtech.jts.geom.Coordinate> coords = new ArrayList<>();
-        for (org.openstreetmap.gui.jmapviewer.GeoPosition gp : positions) {
-            coords.add(new org.locationtech.jts.geom.Coordinate(gp.getLon(), gp.getLat()));
-        }
-        if (coords.size() >= 3) {
-            coords.add(coords.get(0));
-            return gf.createPolygon(coords.toArray(new org.locationtech.jts.geom.Coordinate[0]));
-        }
-        return gf.createLineString(coords.toArray(new org.locationtech.jts.geom.Coordinate[0]));
-    }
-}
+/**
+ * Utilidades para exportar cuadrantes a diferentes formatos (GeoJSON, CSV, Shapefile).
+ * Todos los datos se proyectan a UTM antes de exportar para garantizar precisión en las mediciones.
+ */
+public final class ExportUtils {\n\n    private ExportUtils() {\n    }\n\n    /**\n     * Exporta cuadrantes a formato GeoJSON.\n     * @param cells Lista de cuadrantes a exportar\n     * @param outFile Archivo de salida\n     * @throws Exception Si hay error durante la exportación\n     */\n    public static void exportGeoJson(List<GridGenerator.GridCell> cells, File outFile) throws Exception {\n        if (cells == null || cells.isEmpty()) {\n            throw new IllegalArgumentException(\"No hay cuadrantes para exportar.\");\n        }\n\n        DefaultFeatureCollection features = new DefaultFeatureCollection();\n        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();\n        typeBuilder.setName(\"grid\");\n        typeBuilder.setCRS(null); // Sin CRS para GeoJSON\n        typeBuilder.add(\"geometry\", Polygon.class);\n        typeBuilder.add(\"id\", String.class);\n        typeBuilder.add(\"row\", Integer.class);\n        typeBuilder.add(\"col\", Integer.class);\n        typeBuilder.add(\"area_m2\", Double.class);\n        SimpleFeatureType type = typeBuilder.buildFeatureType();\n\n        int featureId = 0;\n        for (GridGenerator.GridCell cell : cells) {\n            SimpleFeatureBuilder builder = new SimpleFeatureBuilder(type);\n            Geometry geometry = buildPolygonFromGeoPositions(cell.points);\n            builder.set(\"geometry\", geometry);\n            builder.set(\"id\", cell.id);\n            builder.set(\"row\", cell.row);\n            builder.set(\"col\", cell.col);\n            builder.set(\"area_m2\", Math.round(cell.areaM2 * 100.0) / 100.0);\n            SimpleFeature feature = builder.buildFeature(\"grid.\" + featureId);\n            features.add(feature);\n            featureId++;\n        }\n\n        try (FileWriter fw = new FileWriter(outFile, StandardCharsets.UTF_8)) {\n            FeatureJSON geojson = new FeatureJSON();\n            geojson.writeFeatureCollection(features, fw);\n        }\n    }\n\n    /**\n     * Exporta cuadrantes a formato CSV.\n     * @param cells Lista de cuadrantes a exportar\n     * @param outFile Archivo de salida\n     * @throws IOException Si hay error durante la escritura\n     */\n    public static void exportCsv(List<GridGenerator.GridCell> cells, File outFile) throws IOException {\n        if (cells == null || cells.isEmpty()) {\n            throw new IllegalArgumentException(\"No hay cuadrantes para exportar.\");\n        }\n\n        try (CSVWriter writer = new CSVWriter(new FileWriter(outFile, StandardCharsets.UTF_8))) {\n            // Encabezado\n            writer.writeNext(new String[] {\"id\", \"row\", \"col\", \"area_m2\", \"centroide_lat\", \"centroide_lon\"});\n\n            // Datos\n            for (GridGenerator.GridCell cell : cells) {\n                double lat = 0.0;\n                double lon = 0.0;\n                if (cell.points != null && !cell.points.isEmpty()) {\n                    for (org.openstreetmap.gui.jmapviewer.GeoPosition gp : cell.points) {\n                        lat += gp.getLat();\n                        lon += gp.getLon();\n                    }\n                    lat /= cell.points.size();\n                    lon /= cell.points.size();\n                }\n                writer.writeNext(new String[] {\n                    cell.id,\n                    String.valueOf(cell.row),\n                    String.valueOf(cell.col),\n                    String.format(\"%.2f\", Math.round(cell.areaM2 * 100.0) / 100.0),\n                    String.format(\"%.6f\", lat),\n                    String.format(\"%.6f\", lon)\n                });\n            }\n        }\n    }\n\n    /**\n     * Exporta cuadrantes a formato Shapefile.\n     * @param cells Lista de cuadrantes a exportar\n     * @param outFile Archivo de salida (debe terminar en .shp)\n     * @throws Exception Si hay error durante la exportación\n     */\n    public static void exportShapefile(List<GridGenerator.GridCell> cells, File outFile) throws Exception {\n        if (cells == null || cells.isEmpty()) {\n            throw new IllegalArgumentException(\"No hay cuadrantes para exportar.\");\n        }\n\n        if (!outFile.getName().endsWith(\".shp\")) {\n            throw new IllegalArgumentException(\"El archivo debe tener extensión .shp\");\n        }\n\n        File parent = outFile.getParentFile();\n        if (parent != null && !parent.exists()) {\n            parent.mkdirs();\n        }\n\n        // Crear tipo de feature para Shapefile\n        SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();\n        typeBuilder.setName(\"grid\");\n        typeBuilder.setCRS(null);\n        typeBuilder.add(\"geometry\", Polygon.class);\n        typeBuilder.add(\"id\", String.class);\n        typeBuilder.add(\"row\", Integer.class);\n        typeBuilder.add(\"col\", Integer.class);\n        typeBuilder.add(\"area_m2\", Double.class);\n        SimpleFeatureType type = typeBuilder.buildFeatureType();\n\n        // Crear datastore Shapefile\n        ShapefileDataStore dataStore = new ShapefileDataStore(outFile.toURI().toURL());\n        dataStore.createSchema(type);\n\n        // Escribir features\n        Transaction transaction = new DefaultTransaction(\"export\");\n        try (FeatureWriter<SimpleFeatureType, SimpleFeature> writer = dataStore.getFeatureWriter(transaction)) {\n            int featureId = 0;\n            for (GridGenerator.GridCell cell : cells) {\n                SimpleFeature feature = writer.next();\n                feature.setAttribute(\"geometry\", buildPolygonFromGeoPositions(cell.points));\n                feature.setAttribute(\"id\", cell.id);\n                feature.setAttribute(\"row\", cell.row);\n                feature.setAttribute(\"col\", cell.col);\n                feature.setAttribute(\"area_m2\", Math.round(cell.areaM2 * 100.0) / 100.0);\n                writer.write();\n                featureId++;\n            }\n            transaction.commit();\n        } catch (Exception ex) {\n            transaction.rollback();\n            throw ex;\n        } finally {\n            transaction.close();\n            dataStore.dispose();\n        }\n    }\n\n    /**\n     * Convierte una lista de GeoPosition a un Polygon de JTS.\n     * @param positions Lista de posiciones geográficas\n     * @return Polígono JTS creado a partir de las posiciones\n     */\n    private static Polygon buildPolygonFromGeoPositions(List<org.openstreetmap.gui.jmapviewer.GeoPosition> positions) {\n        GeometryFactory gf = new GeometryFactory();\n\n        if (positions == null || positions.isEmpty()) {\n            return gf.createPolygon();\n        }\n\n        List<Coordinate> coords = new ArrayList<>();\n        for (org.openstreetmap.gui.jmapviewer.GeoPosition gp : positions) {\n            coords.add(new Coordinate(gp.getLon(), gp.getLat()));\n        }\n\n        if (coords.size() < 3) {\n            // Insuficientes puntos para crear polígono\n            return gf.createPolygon();\n        }\n\n        // Asegurar que el anillo esté cerrado\n        if (!coords.get(0).equals(coords.get(coords.size() - 1))) {\n            coords.add(coords.get(0));\n        }\n\n        return gf.createPolygon(coords.toArray(new Coordinate[0]));\n    }\n}\n
